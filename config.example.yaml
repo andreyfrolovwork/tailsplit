@@ -14,6 +14,11 @@ app:
 # Optional: bind direct traffic and Tailscale transport to the physical NIC.
 # interface: en0
 
+# Optional: sign every embedded device in to a self-hosted coordination server
+# such as Headscale instead of Tailscale's control plane. Set this before adding
+# devices; a device that already signed in elsewhere must be removed and re-added.
+# control_url: https://headscale.example.com
+
 # Optional legacy profile with logical ID main and state_dir/tailscale state.
 # Omit this block (or set tailscale: null) to use only exits below, or to keep a
 # zero-exit draft. Removing main never renames another exit or moves its state.
@@ -110,6 +115,7 @@ rules:
     - 8.8.4.4/32
     - 1.1.1.1/32
     - 1.0.0.1/32
+  # A whole top-level domain is accepted in routing rules, e.g. [ru, su].
   direct_domains: []
   direct_ips: []
   # Unmatched traffic: direct, proxy (rules.default_exit), or an ID from exits.

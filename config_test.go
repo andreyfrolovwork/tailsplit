@@ -40,7 +40,11 @@ func TestConfigRejectsSilentlyUnsafeInput(t *testing.T) {
 		"fake overlap":         "rules:\n  direct_ips: [198.18.0.0/16]\n",
 		"URL domain":           "rules:\n  direct_domains: [https://example.com/path]\n",
 		"IP domain":            "rules:\n  direct_domains: [8.8.8.8]\n",
-		"single label":         "rules:\n  direct_domains: [com]\n",
+		"single label magic":   "dns:\n  magic_domains: [net]\n",
+		"control credentials":  "control_url: https://user:pass@hs.example.com\n",
+		"control scheme":       "control_url: ftp://hs.example.com\n",
+		"control query":        "control_url: https://hs.example.com/?key=1\n",
+		"control without host": "control_url: hs.example.com\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := loadTestConfig(t, text); err == nil {

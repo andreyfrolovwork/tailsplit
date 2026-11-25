@@ -16,7 +16,9 @@ import (
 	"regexp"
 	"runtime"
 	"slices"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/idy/tailsplit"
@@ -632,6 +634,7 @@ func (c *Controller) startPreparedConfigLocked(mode, focus, configPath, configBa
 	if err := c.checkStartLocked(); err != nil {
 		return err
 	}
+	trustConfigControlURL(configPath)
 	runCommand := "run"
 	routingMode := tailsplit.RoutingSplit
 	trafficExit := tailsplit.MainExit
@@ -1122,15 +1125,61 @@ func (c *Controller) setExit(id string, exit ExitSnapshot) {
 
 var privateLogMaterial = regexp.MustCompile(`https://login\.tailscale\.com/a/[^\s]+|tskey-[A-Za-z0-9_-]+`)
 
+// customControl is the configured self-hosted coordination server, if any. Its
+// device login links are trusted and redacted like login.tailscale.com ones.
+var customControl atomic.Pointer[controlServer]
+
+type controlServer struct {
+	scheme, host string
+	links        *regexp.Regexp
+}
+
+// TrustControlURL records the control_url of the configuration being started.
+// An empty or invalid value restores the default Tailscale-only policy.
+func TrustControlURL(value string) {
+	value, err := tailsplit.NormalizeControlURL(value)
+	u, parseErr := url.Parse(value)
+	if err != nil || parseErr != nil || value == "" {
+		customControl.Store(nil)
+		return
+	}
+	customControl.Store(&controlServer{
+		scheme: u.Scheme, host: u.Host,
+		links: regexp.MustCompile(regexp.QuoteMeta(u.Scheme+"://"+u.Host) + `/[^\s]+`),
+	})
+}
+
+// trustConfigControlURL reads only control_url; a missing or unreadable file
+// keeps the default policy and leaves reporting to the normal config loader.
+func trustConfigControlURL(path string) {
+	var config struct {
+		ControlURL string `yaml:"control_url"`
+	}
+	if data, err := os.ReadFile(path); err == nil {
+		_ = yaml.Unmarshal(data, &config)
+	}
+	TrustControlURL(config.ControlURL)
+}
+
 // RedactLog removes device authorization links and keys from UI-facing logs.
 func RedactLog(message string) string {
+	if control := customControl.Load(); control != nil {
+		message = control.links.ReplaceAllString(message, "[redacted]")
+	}
 	return privateLogMaterial.ReplaceAllString(message, "[redacted]")
 }
 
 func validLoginURL(value string) bool {
 	u, err := url.Parse(value)
-	return err == nil && u.Scheme == "https" && u.Host == "login.tailscale.com" &&
-		u.User == nil && len(u.Path) > 3 && u.Path[:3] == "/a/"
+	if err != nil || u.User != nil {
+		return false
+	}
+	if control := customControl.Load(); control != nil && u.Scheme == control.scheme &&
+		strings.EqualFold(u.Host, control.host) && len(u.Path) > 1 {
+		return true
+	}
+	return u.Scheme == "https" && u.Host == "login.tailscale.com" &&
+		len(u.Path) > 3 && u.Path[:3] == "/a/"
 }
 
 type eventWriter struct {

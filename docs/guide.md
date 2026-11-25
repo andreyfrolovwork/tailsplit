@@ -403,6 +403,28 @@ controls whole-system traffic capture and system DNS publishing. DNS listener
 addresses and ports are fixed. `dns.listen` is unsupported and fails validation;
 remove that field from older YAML files.
 
+### Self-hosted control server
+
+To use Headscale or another self-hosted coordination server, set its address at
+the top level of the YAML before adding devices:
+
+```yaml
+control_url: https://headscale.example.com
+```
+
+Every embedded device then registers with that server, and its login links open
+in the browser like Tailscale's own. A device that already signed in to another
+server keeps that identity; remove it and add it again after changing this field.
+
+Routing rules accept a whole top-level domain, so this keeps `.ru` names direct
+while everything else uses the default exit:
+
+```yaml
+rules:
+  direct_domains: [ru, su, xn--p1ai]
+  final: proxy
+```
+
 ### Rule sources
 
 Edit routing and DNS rules in the YAML. Choose **Settings → Routing rules →

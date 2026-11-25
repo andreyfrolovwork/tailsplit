@@ -747,6 +747,40 @@ func TestLoginURLDoesNotOpenArbitrarySites(t *testing.T) {
 	}
 }
 
+func TestCustomControlLoginURLIsTrustedOnlyWhileConfigured(t *testing.T) {
+	t.Cleanup(func() { TrustControlURL("") })
+	link := "https://hs.example.com/register/abc123"
+	if validLoginURL(link) {
+		t.Fatal("accepted a self-hosted login link without control_url")
+	}
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("control_url: https://HS.example.com/\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	trustConfigControlURL(path)
+	for _, good := range []string{link, "https://login.tailscale.com/a/test"} {
+		if !validLoginURL(good) {
+			t.Fatalf("rejected login destination %q", good)
+		}
+	}
+	for _, bad := range []string{
+		"http://hs.example.com/register/abc123", "https://hs.example.com.evil.example/register/abc123",
+		"https://user@hs.example.com/register/abc123", "https://hs.example.com", "https://hs.example.com/",
+		"https://evil.example/register/abc123",
+	} {
+		if validLoginURL(bad) {
+			t.Fatalf("accepted arbitrary login destination %q", bad)
+		}
+	}
+	if got := RedactLog("open " + link + " now"); got != "open [redacted] now" {
+		t.Fatalf("log kept the login link: %q", got)
+	}
+	trustConfigControlURL(filepath.Join(t.TempDir(), "missing.yaml"))
+	if validLoginURL(link) {
+		t.Fatal("a configuration without control_url kept trusting the old server")
+	}
+}
+
 func TestLogRotationAndPermissions(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "core.log")
 	log, err := openLog(path)

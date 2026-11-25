@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/netip"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -29,6 +30,9 @@ type Config struct {
 	DNS   DNSConfig    `yaml:"dns"`
 	Rules RulesConfig  `yaml:"rules"`
 	TUN   TUNConfig    `yaml:"tun"`
+	// ControlURL points every embedded device at a self-hosted coordination
+	// server such as Headscale. Empty keeps the default Tailscale control plane.
+	ControlURL string `yaml:"control_url,omitempty"`
 	// Focus scopes login, discovery, logout and ping to one exit ("main" is the
 	// primary endpoint). It is never stored in YAML; the service re-derives paths.
 	Focus string `yaml:"-"`
@@ -322,6 +326,9 @@ func (c *Config) normalize(base string) error {
 	default:
 		return errors.New("log_level must be trace, debug, info, warn, error, fatal or panic")
 	}
+	if c.ControlURL, err = NormalizeControlURL(c.ControlURL); err != nil {
+		return err
+	}
 	value, err := netip.ParseAddrPort(c.Listen)
 	if err != nil || !value.Addr().IsLoopback() || value.Port() == 0 {
 		return errors.New("listen must be a literal loopback IP and nonzero port")
@@ -361,11 +368,13 @@ func (c *Config) normalize(base string) error {
 	}
 	for name, domains := range map[string]*[]string{
 		"rules.proxy_domains": &c.Rules.ProxyDomains, "rules.direct_domains": &c.Rules.DirectDomains,
-		"dns.magic_domains": &c.DNS.MagicDomains,
 	} {
-		if err := normalizeDomains(name, domains); err != nil {
+		if err := normalizeRuleDomains(name, domains); err != nil {
 			return err
 		}
+	}
+	if err := normalizeDomains("dns.magic_domains", &c.DNS.MagicDomains); err != nil {
+		return err
 	}
 	for name, prefixes := range map[string][]string{
 		"rules.proxy_ips": c.Rules.ProxyIPs, "rules.direct_ips": c.Rules.DirectIPs,
@@ -426,7 +435,7 @@ func (c *Config) normalize(base string) error {
 			return fmt.Errorf("rules.routes[%d].exit must be main or a valid additional exit ID", index)
 		}
 		name := fmt.Sprintf("rules.routes[%d]", index)
-		if err := normalizeDomains(name+".domains", &route.Domains); err != nil {
+		if err := normalizeRuleDomains(name+".domains", &route.Domains); err != nil {
 			return err
 		}
 		if err := validatePrefixes(name+".ips", route.IPs); err != nil {
@@ -694,12 +703,38 @@ func parseResolver(value string) (netip.AddrPort, error) {
 	return address, nil
 }
 
+// NormalizeControlURL validates a custom coordination server address and
+// returns its canonical form without a trailing slash. Empty stays empty.
+func NormalizeControlURL(value string) (string, error) {
+	value = strings.TrimRight(strings.TrimSpace(value), "/")
+	if value == "" {
+		return "", nil
+	}
+	u, err := url.Parse(value)
+	if err != nil || u.Scheme != "https" && u.Scheme != "http" || u.Hostname() == "" ||
+		u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return "", errors.New("control_url must be an http(s) URL such as https://headscale.example.com")
+	}
+	u.Scheme, u.Host = strings.ToLower(u.Scheme), strings.ToLower(u.Host)
+	return u.String(), nil
+}
+
 func normalizeDomains(name string, domains *[]string) error {
+	return normalizeDomainList(name, domains, false)
+}
+
+// normalizeRuleDomains also accepts a whole top-level domain such as "ru", so
+// one routing rule can cover every name under it.
+func normalizeRuleDomains(name string, domains *[]string) error {
+	return normalizeDomainList(name, domains, true)
+}
+
+func normalizeDomainList(name string, domains *[]string, topLevel bool) error {
 	for index, raw := range *domains {
 		value := strings.TrimSuffix(strings.TrimPrefix(strings.TrimPrefix(raw, "*."), "."), ".")
 		value, err := idna.Lookup.ToASCII(value)
 		value = strings.ToLower(value)
-		if err != nil || !strings.Contains(value, ".") || len(value) > 253 {
+		if err != nil || !topLevel && !strings.Contains(value, ".") || len(value) > 253 {
 			return fmt.Errorf("%s contains an invalid domain suffix", name)
 		}
 		if _, err := netip.ParseAddr(value); err == nil {

@@ -475,6 +475,9 @@ func compileWithOptions(ctx context.Context, config Config, options compileOptio
 			if config.Interface != "" {
 				endpoint["bind_interface"] = config.Interface
 			}
+			if config.ControlURL != "" {
+				endpoint["control_url"] = config.ControlURL
+			}
 			return endpoint
 		}
 		// A focused session keeps the primary tag so single-device flows apply.
